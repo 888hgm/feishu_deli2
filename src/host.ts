@@ -35,7 +35,8 @@ export async function saveConfig(config: Config): Promise<void> {
     // 只提交一个月份分组作数据源声明，所有节点在完整记录上分别计算。
     dataConditions: [{ tableId: config.tableId, dataRange: { type: sdk.SourceType.ALL },
       groups: [{ fieldId: config.monthFieldId, mode: sdk.GroupMode.INTEGRATED,
-        sort: { sortType: sdk.DATA_SOURCE_SORT_TYPE.VIEW } }], series: 'COUNTA' }],
+        sort: { sortType: sdk.DATA_SOURCE_SORT_TYPE.VIEW } }],
+      series: config.statistic === 'sku' ? [{ fieldId: config.skuFieldId, rollup: sdk.Rollup.SUM }] : 'COUNTA' }],
     customConfig: { milestoneTable: structuredClone(config) },
   });
   if (!success) throw new Error('飞书未确认保存成功，请重试');

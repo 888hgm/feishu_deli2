@@ -2,7 +2,7 @@ import type { Field } from './model.ts';
 import type { RecordItem } from './summary.ts';
 export interface RecordPage { records: RecordItem[]; hasMore: boolean; pageToken?: number }
 export interface ReadableTable {
-  getFieldMetaList(): Promise<{ id: string; name: string; property?: unknown }[]>;
+  getFieldMetaList(): Promise<{ id: string; name: string; type?: number; property?: unknown }[]>;
   getActiveView?(): Promise<{ getFieldMetaList(): Promise<{ id: string; name: string }[]> }>;
   getRecordsByPage(params: { pageSize: number; stringValue: boolean; pageToken?: number }): Promise<RecordPage>;
 }
@@ -17,7 +17,7 @@ export async function readFields(table: ReadableTable): Promise<Field[]> {
     const field = metas.find(f => f.id === id);
     if (!field) return [];
     const property = field.property as { options?: { name?: unknown }[] } | undefined;
-    return [{ id: field.id, name: field.name, options: Array.isArray(property?.options) ? property.options.flatMap(o => typeof o.name === 'string' ? [o.name] : []) : [] }];
+    return [{ id: field.id, name: field.name, numeric: field.type === 2, options: Array.isArray(property?.options) ? property.options.flatMap(o => typeof o.name === 'string' ? [o.name] : []) : [] }];
   });
 }
 export async function readRecords(table: ReadableTable, signal?: AbortSignal, progress?: (count: number) => void): Promise<RecordItem[]> {
