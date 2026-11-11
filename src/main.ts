@@ -1,6 +1,7 @@
 import './style.css';
-import { defaultConfig, newNode, suggestGrouping, suggestNodes, validateConfig, type Config, type Field, type TableMeta, type Milestone } from './model.ts';
+import { defaultConfig, newNode, suggestGrouping, suggestNodes, validateConfig, columns, setColumnWidth, type Config, type Field, type TableMeta, type Milestone } from './model.ts';
 import { getChoices, summarize, tableHTML, exportCSV, escapeHTML as e, type RecordItem, type Choices, type Summary } from './summary.ts';
+import { applyColumnWidths, installColumnResize } from './column-resize.ts';
 import * as host from './host.ts';
 
 let config = defaultConfig(), fields: Field[] = [], tables: TableMeta[] = [], records: RecordItem[] = [];
@@ -11,11 +12,28 @@ let controller: AbortController | undefined, sequence = 0, refreshTimer: ReturnT
 let picker: { node: number; key: 'planFieldId' | 'actualFieldId' | 'statusFieldId' } | { key: 'monthFieldId' | 'companyFieldId' } | undefined;
 let batch = false, batchSelected = new Set<string>(), batchSuggestions: Milestone[] = [];
 let returnFocus: HTMLElement | null = null;
+let widthNoticeShown = false;
 const root = document.querySelector<HTMLDivElement>('#app')!;
-root.innerHTML = `<header class="topbar"><div class="identity"><span class="app-icon" aria-hidden="true">▦</span><div><strong>关键节点完成汇总表</strong><small>独立仪表盘插件 · v1.0.0</small></div><span id="state" role="status">连接中</span></div><div class="actions"><button data-action="refresh" disabled>刷新数据</button><button data-action="export" disabled>导出 CSV</button><button data-action="panel" disabled>配置</button><button data-action="save" class="primary top-save" hidden>添加到仪表盘</button></div></header>
-<div class="workspace"><main class="report"><div class="report-heading"><div><span class="eyebrow">项目节点 / 月度汇总</span><h1 id="report-title"></h1><p class="description">按上市月份、产品公司汇总 · 各节点独立统计</p></div></div><div class="summary-meta"><span id="source-note">等待连接飞书</span><span id="updated"></span></div><div id="message" class="message" role="status"></div><div id="grid" class="grid" tabindex="0" aria-label="汇总表，可横向和纵向滚动" hidden></div><footer class="report-footer"><span id="totals"></span><span>时间字段排除空白与单独的 /；完成率 = 完成 ÷（完成 + 未完成）</span></footer><div id="quality-note" class="quality-note" hidden></div></main><aside class="sidebar" aria-label="汇总表配置"><div class="sidebar-heading"><strong>汇总表配置</strong><button class="icon-button" data-action="panel" aria-label="收起配置">×</button></div><nav class="tabs"><button data-action="tab" data-tab="data">数据范围</button><button data-action="tab" data-tab="nodes">节点字段</button><button data-action="tab" data-tab="appearance">表格设置</button></nav><div id="panel" class="panel"></div><footer class="panel-footer"><span id="save-status"></span><button data-action="save" class="primary">保存配置</button></footer></aside></div><dialog id="picker-dialog" aria-labelledby="picker-title"><div class="dialog-heading"><h2 id="picker-title"></h2><button class="icon-button" data-action="dialog-close" aria-label="关闭字段选择">×</button></div><input id="field-search" class="search" type="search" aria-label="搜索字段" placeholder="输入字段名称搜索"><div id="picker-list" class="picker-list"></div><footer id="picker-footer" class="dialog-footer"></footer></dialog><div class="toast" role="status" hidden></div>`;
+root.innerHTML = `<header class="topbar"><div class="identity"><span class="app-icon" aria-hidden="true">▦</span><div><strong>关键节点完成汇总表</strong><small>独立仪表盘插件 · v1.0.2</small></div><span id="state" role="status">连接中</span></div><div class="actions"><button data-action="refresh" disabled>刷新数据</button><button data-action="export" disabled>导出 CSV</button><button data-action="panel" disabled>配置</button><button data-action="save" class="primary top-save" hidden>添加到仪表盘</button></div></header>
+<div class="workspace"><main class="report"><div class="report-heading"><div><span class="eyebrow">项目节点 / 月度汇总</span><h1 id="report-title"></h1><p class="description">按上市月份、产品公司汇总 · 各节点独立统计</p></div></div><div class="summary-meta"><span id="source-note">等待连接飞书</span><span id="updated"></span></div><div id="message" class="message" role="status"></div><div id="grid" class="grid" tabindex="0" aria-label="汇总表，可横向和纵向滚动" hidden></div><footer class="report-footer"><span id="totals"></span><span>时间字段排除空白与单独的 /；完成率 = 完成 ÷（完成 + 有效未完成）</span></footer><div id="quality-note" class="quality-note" hidden></div></main><aside class="sidebar" aria-label="汇总表配置"><div class="sidebar-heading"><strong>汇总表配置</strong><button class="icon-button" data-action="panel" aria-label="收起配置">×</button></div><nav class="tabs"><button data-action="tab" data-tab="data">数据范围</button><button data-action="tab" data-tab="nodes">节点字段</button><button data-action="tab" data-tab="appearance">表格设置</button></nav><div id="panel" class="panel"></div><footer class="panel-footer"><span id="save-status"></span><button data-action="save" class="primary">保存配置</button></footer></aside></div><dialog id="picker-dialog" aria-labelledby="picker-title"><div class="dialog-heading"><h2 id="picker-title"></h2><button class="icon-button" data-action="dialog-close" aria-label="关闭字段选择">×</button></div><input id="field-search" class="search" type="search" aria-label="搜索字段" placeholder="输入字段名称搜索"><div id="picker-list" class="picker-list"></div><footer id="picker-footer" class="dialog-footer"></footer></dialog><div class="toast" role="status" hidden></div>`;
 const q = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
 const dialog = q<HTMLDialogElement>('#picker-dialog');
+const columnResize = installColumnResize({
+  grid: q('#grid'), getConfig: () => config, enabled: () => ready && !loading && !error && !!summary,
+  change: changeWidth,
+  commit: () => {
+    renderPanel(); saveState();
+    if (viewing && !widthNoticeShown) { toast('列宽已临时调整；长期保留请进入组件配置，调整后保存配置。'); widthNoticeShown = true; }
+  },
+});
+function changeWidth(key: string, value: number) {
+  setColumnWidth(config, key, value);
+  const table = q('#grid').querySelector<HTMLTableElement>('.summary-table');
+  if (table) applyColumnWidths(table, config);
+  const current = columns(config).find(c => c.key === key);
+  root.querySelectorAll<HTMLInputElement>('[data-column-width]').forEach(input => { if (input.dataset.columnWidth === key && current) input.value = String(current.width); });
+  saveState();
+}
 function toast(text: string) { q('.toast').textContent = text; q('.toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { q('.toast').hidden = true; }, 4500); }
 function setState(text: string) { q('#state').textContent = text; }
 function saveState() {
@@ -28,6 +46,7 @@ function saveState() {
 }
 function message(text: string, isError = false) { q('#message').textContent = text; q('#message').hidden = !text; q('#message').classList.toggle('error', isError); }
 function renderReport() {
+  columnResize.cancel();
   q('#report-title').textContent = config.title.trim() || '关键节点完成汇总表';
   q('#source-note').textContent = loadedTableId ? (tables.find(t => t.id === loadedTableId)?.name ?? '当前多维表数据') : '等待选择数据表';
   summary = undefined; q('#grid').hidden = true; q('#totals').textContent = ''; q('#quality-note').hidden = true;
@@ -45,6 +64,7 @@ function renderReport() {
     if (summary.missingMonth) notes.push(`${summary.missingMonth} 条记录未填写上市时间`);
     if (summary.missingCompany) notes.push(`${summary.missingCompany} 条记录未填写产品公司`);
     if (summary.otherStatus) notes.push(`${summary.otherStatus} 个非空状态值既非“完成”也非“未完成”，未计入完成率`);
+    if (summary.excludedUnfinished) notes.push(`${summary.excludedUnfinished} 个节点“未完成”因计划和实际时间均无有效内容，未计入完成率`);
     if (notes.length) { q('#quality-note').hidden = false; q('#quality-note').textContent = notes.join('；') + '。'; }
     setState('已更新');
   } catch (err) { error = errorText(err); message(error, true); setState('读取失败'); }
@@ -65,6 +85,12 @@ function selection(kind: 'month' | 'company', label: string, options: string[]) 
 function orderList(items: string[], kind: string) {
   return `<div class="order-list">${items.map((name, i) => `<div><span>${i + 1}. ${e(name)}</span><button data-action="move" data-kind="${kind}" data-index="${i}" data-step="-1" aria-label="上移${e(name)}" ${i === 0 ? 'disabled' : ''}>↑</button><button data-action="move" data-kind="${kind}" data-index="${i}" data-step="1" aria-label="下移${e(name)}" ${i === items.length - 1 ? 'disabled' : ''}>↓</button></div>`).join('')}</div>`;
 }
+function columnWidthSettings() {
+  return `<section class="section"><div class="section-title">列宽调整 <button class="link" data-action="reset-widths">全部恢复默认</button></div><p class="hint">可直接拖动表头右侧边线调整，双击恢复该列默认宽度。也可在下方输入像素值，保存配置后长期生效。</p><div class="width-settings">${columns(config).map(column => `<label class="width-row"><span>${e(column.label)}</span><input type="number" min="${column.min}" max="${column.max}" step="1" value="${column.width}" data-column-width="${e(column.key)}" aria-label="${e(column.label)}列宽"><small>px</small></label>`).join('')}</div></section>`;
+}
+function lowRateSettings() {
+  return `<section class="section"><div class="section-title">完成率提醒</div><label class="check"><input type="checkbox" data-low-rate-enabled ${config.lowRateEnabled ? 'checked' : ''}><span>完成率低于阈值标红</span></label><label class="field threshold-field"><span>标红阈值（%）</span><input type="number" min="0" max="100" step="0.1" value="${config.lowRateThreshold}" data-low-rate-threshold ${config.lowRateEnabled ? '' : 'disabled'}></label><p class="hint">开启后，低于 ${config.lowRateThreshold}% 的完成率显示红字，等于阈值或显示“—”时不标红。按未四舍五入的实际完成率比较；仅影响完成率列。</p></section>`;
+}
 function renderPanel() {
   if (viewing) return;
   const scrollTop = q('#panel').scrollTop;
@@ -73,7 +99,8 @@ function renderPanel() {
   let html = '';
   if (tab === 'data') html = `<section class="section"><label class="field"><span>数据表</span><select id="table-select" aria-label="数据表"><option value="">请选择数据表</option>${tables.map(t => `<option value="${e(t.id)}" ${config.tableId === t.id ? 'selected' : ''}>${e(t.name)}</option>`).join('')}</select></label>${fieldButton('monthFieldId', '上市月份字段', config.monthFieldId)}${fieldButton('companyFieldId', '产品公司字段', config.companyFieldId)}<p class="hint">读取当前用户有权访问的全表记录。上市时间用于分组，节点日期只判断是否有效。本版使用下方范围选择，不跟随仪表盘外层筛选。</p></section>${selection('month', '上市月份范围', choices.months)}${selection('company', '产品公司范围', choices.companies)}`;
   if (tab === 'nodes') html = `<section class="section"><div class="section-title">统计节点 <span>${config.nodes.filter(n => n.enabled).length} / ${config.nodes.length}</span></div><p class="hint">每个节点对应三列。勾选启用后展示；可为每列选择不同的源字段，并修改显示名称。</p><div class="node-actions"><button class="primary" data-action="batch">批量选择节点</button><button data-action="add-node">＋ 手动添加</button></div></section><div class="node-list">${config.nodes.map((n, i) => `<details class="node-card" data-node-id="${e(n.id)}" ${openNodes.has(n.id) || !n.planFieldId || !n.actualFieldId || !n.statusFieldId ? 'open' : ''}><summary><label class="check"><input type="checkbox" data-node-enabled="${i}" ${n.enabled ? 'checked' : ''} aria-label="启用${e(n.name || `节点${i + 1}`)}"></label><span class="node-name">${e(n.name || `节点 ${i + 1}`)}</span><span class="node-marker">${n.planFieldId && n.actualFieldId && n.statusFieldId ? '已映射' : '待选字段'}</span></summary><div class="node-body"><label class="field"><span>节点名称</span><input data-node="${i}" data-node-key="name" value="${e(n.name)}" maxlength="80" placeholder="例如：产品设计"></label>${fieldButton('planFieldId', '计划完成时间字段', n.planFieldId, i)}${fieldButton('actualFieldId', '实际完成时间字段', n.actualFieldId, i)}${fieldButton('statusFieldId', '是否完成字段', n.statusFieldId, i)}<div class="header-labels"><span class="section-title">表头显示名称</span>${(['planLabel', 'actualLabel', 'rateLabel'] as const).map((k, j) => `<label class="field"><span>${['计划数量列', '实际数量列', '完成率列'][j]}</span><input data-node="${i}" data-node-key="${k}" value="${e(n[k])}" placeholder="${e(j === 2 ? '完成率' : `${n.name}${j === 0 ? '计划完成' : '实际完成'}`)}" maxlength="120"></label>`).join('')}</div><div class="node-bottom"><button data-action="move" data-kind="node" data-index="${i}" data-step="-1" ${!i ? 'disabled' : ''}>上移</button><button data-action="move" data-kind="node" data-index="${i}" data-step="1" ${i === config.nodes.length - 1 ? 'disabled' : ''}>下移</button><button class="danger" data-action="remove-node" data-index="${i}">移除节点</button></div></div></details>`).join('') || '<div class="panel-empty">先点击“批量选择节点”，根据“是否完成”字段勾选需要的节点；字段名称不同也可手动添加。</div>'}</div>`;
-  if (tab === 'appearance') html = `<section class="section">${textInput('title', '汇总表标题', config.title)}${textInput('monthLabel', '月份列表头', config.monthLabel, '上市时间')}${textInput('companyLabel', '公司列表头', config.companyLabel, '产品公司')}<label class="field"><span>月份排序</span><select data-key="monthSort"><option value="asc" ${config.monthSort === 'asc' ? 'selected' : ''}>时间从早到晚</option><option value="desc" ${config.monthSort === 'desc' ? 'selected' : ''}>时间从晚到早</option></select></label><label class="field"><span>完成率小数位</span><select data-key="decimals">${[0, 1, 2].map(n => `<option value="${n}" ${n === config.decimals ? 'selected' : ''}>${n} 位小数</option>`).join('')}</select></label><label class="field"><span>表格字号</span><select data-key="fontSize">${[12, 14, 16].map(n => `<option value="${n}" ${n === config.fontSize ? 'selected' : ''}>${n}px</option>`).join('')}</select></label></section><section class="section"><div class="section-title">统计与展示口径</div><p class="hint">计划和实际数量：只排除空白、单独的 / 或 ／；其他非空内容均计为 1。<br><br>完成率：仅识别去掉首尾空格后的“完成”和“未完成”。分母为 0 时显示 —。<br><br>所有数值使用统一颜色；不随完成率变色。<br><br>日期无需与上市月份一致。源表仅被读取，修改表头不会修改源字段。</p></section>`;
+  if (tab === 'appearance') html = `<section class="section">${textInput('title', '汇总表标题', config.title)}${textInput('monthLabel', '月份列表头', config.monthLabel, '上市时间')}${textInput('companyLabel', '公司列表头', config.companyLabel, '产品公司')}<label class="field"><span>月份排序</span><select data-key="monthSort"><option value="asc" ${config.monthSort === 'asc' ? 'selected' : ''}>时间从早到晚</option><option value="desc" ${config.monthSort === 'desc' ? 'selected' : ''}>时间从晚到早</option></select></label><label class="field"><span>完成率小数位</span><select data-key="decimals">${[0, 1, 2].map(n => `<option value="${n}" ${n === config.decimals ? 'selected' : ''}>${n} 位小数</option>`).join('')}</select></label><label class="field"><span>表格字号</span><select data-key="fontSize">${[12, 14, 16].map(n => `<option value="${n}" ${n === config.fontSize ? 'selected' : ''}>${n}px</option>`).join('')}</select></label></section><section class="section"><div class="section-title">统计与展示口径</div><p class="hint">计划和实际数量：只排除空白、单独的 / 或 ／；其他非空内容均计为 1。<br><br>完成率：仅识别去掉首尾空格后的“完成”和“未完成”。未完成仅在计划或实际时间至少一项有效时计入，两项均为空白或单独的 / 时排除该节点的未完成。分母为 0 时显示 —。<br><br>未开启完成率提醒时，所有数值使用统一颜色。<br><br>日期无需与上市月份一致。源表仅被读取，修改表头不会修改源字段。</p></section>`;
+  if (tab === 'appearance') html += lowRateSettings() + columnWidthSettings();
   q('#panel').innerHTML = html; q('#panel').scrollTop = scrollTop;
   saveState();
 }
@@ -127,6 +154,7 @@ root.addEventListener('click', async event => {
   if (action === 'panel') { closed = !closed; root.classList.toggle('panel-closed', closed); }
   if (action === 'tab') { tab = b.dataset.tab!; q('#panel').scrollTop = 0; renderPanel(); }
   if (action === 'refresh') void loadTable();
+  if (action === 'reset-widths') { columnResize.cancel(); config.columnWidths = {}; renderReport(); renderPanel(); }
   if (action === 'add-node') { config.nodes.push(newNode()); renderPanel(); renderReport(); }
   if (action === 'remove-node') { config.nodes.splice(Number(b.dataset.index), 1); renderPanel(); renderReport(); }
   if (action === 'range-mode') {
@@ -198,6 +226,18 @@ root.addEventListener('input', event => {
 });
 root.addEventListener('change', event => {
   const input = event.target as HTMLInputElement | HTMLSelectElement;
+  if (input instanceof HTMLInputElement && input.dataset.columnWidth) {
+    const column = columns(config).find(c => c.key === input.dataset.columnWidth);
+    if (column) changeWidth(column.key, Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : column.width);
+    return;
+  }
+  if (input.hasAttribute('data-low-rate-enabled')) {
+    config.lowRateEnabled = (input as HTMLInputElement).checked; renderReport(); renderPanel(); return;
+  }
+  if (input instanceof HTMLInputElement && input.hasAttribute('data-low-rate-threshold')) {
+    if (Number.isFinite(input.valueAsNumber)) config.lowRateThreshold = Math.max(0, Math.min(100, input.valueAsNumber));
+    input.value = String(config.lowRateThreshold); renderReport(); renderPanel(); return;
+  }
   if (input.id === 'table-select') {
     config.tableId = input.value; config.monthFieldId = ''; config.companyFieldId = ''; config.nodes = [];
     config.months = []; config.companies = []; config.monthMode = 'all'; config.companyMode = 'all';

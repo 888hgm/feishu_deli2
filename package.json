@@ -1,6 +1,6 @@
 {
     "name":  "feishu-milestone-table-plugin",
-    "version":  "1.0.0",
+    "version":  "1.0.2",
     "description":  "飞书仪表盘关键节点完成汇总表",
     "private":  true,
     "type":  "module",

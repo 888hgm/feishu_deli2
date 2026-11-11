@@ -10,11 +10,14 @@ export interface Config {
   monthMode: 'all' | 'picked'; months: string[]; companyMode: 'all' | 'picked'; companies: string[];
   monthSort: 'asc' | 'desc'; nodes: Milestone[];
   monthLabel: string; companyLabel: string; decimals: 0 | 1 | 2; fontSize: 12 | 14 | 16;
+  columnWidths: Record<string, number>;
+  lowRateEnabled: boolean; lowRateThreshold: number;
 }
 export function defaultConfig(): Config {
   return { schemaVersion: 1, title: '各产品公司在开项目关键节点完成汇总表', tableId: '', monthFieldId: '', companyFieldId: '',
     monthMode: 'all', months: [], companyMode: 'all', companies: [], monthSort: 'asc', nodes: [],
-    monthLabel: '上市时间', companyLabel: '产品公司', decimals: 0, fontSize: 14 };
+    monthLabel: '上市时间', companyLabel: '产品公司', decimals: 0, fontSize: 14, columnWidths: {},
+    lowRateEnabled: false, lowRateThreshold: 80 };
 }
 export function newNode(name = ''): Milestone {
   return { id: crypto.randomUUID(), name, enabled: true, planFieldId: '', actualFieldId: '', statusFieldId: '',
@@ -42,7 +45,10 @@ export function hydrateConfig(value: unknown): Config {
     monthSort: raw.monthSort === 'desc' ? 'desc' : 'asc', nodes,
     monthLabel: str(raw.monthLabel, fallback.monthLabel), companyLabel: str(raw.companyLabel, fallback.companyLabel),
     decimals: raw.decimals === 1 || raw.decimals === 2 ? raw.decimals : 0,
-    fontSize: raw.fontSize === 12 || raw.fontSize === 16 ? raw.fontSize : 14 };
+    fontSize: raw.fontSize === 12 || raw.fontSize === 16 ? raw.fontSize : 14,
+    columnWidths: sanitizeColumnWidths(raw.columnWidths, nodes),
+    lowRateEnabled: raw.lowRateEnabled === true,
+    lowRateThreshold: typeof raw.lowRateThreshold === 'number' && Number.isFinite(raw.lowRateThreshold) ? Math.max(0, Math.min(100, raw.lowRateThreshold)) : 80 };
 }
 export function validateConfig(config: Config, fields?: Field[]): string | undefined {
   if (!config.tableId) return '请选择数据表';
@@ -64,6 +70,52 @@ export function validateConfig(config: Config, fields?: Field[]): string | undef
 }
 export function nodeHeaders(node: Milestone): string[] {
   return [node.planLabel.trim() || `${node.name}计划完成`, node.actualLabel.trim() || `${node.name}实际完成`, node.rateLabel.trim() || '完成率'];
+}
+export interface Column {
+  key: string; label: string; width: number; defaultWidth: number; min: number; max: number;
+}
+function columnDefaults(nodes: Milestone[]): Column[] {
+  return [
+    { key: 'month', label: '上市时间', defaultWidth: 112, min: 72, max: 600, width: 112 },
+    { key: 'company', label: '产品公司', defaultWidth: 190, min: 100, max: 800, width: 190 },
+    ...nodes.flatMap(node => nodeHeaders(node).map((label, i) => ({ key: `node:${node.id}:${['plan', 'actual', 'rate'][i]}`,
+      label: `${node.name} / ${label}`, defaultWidth: 144, min: 64, max: 600, width: 144 }))),
+  ];
+}
+export function clampWidth(value: number, column: Column): number {
+  return Number.isFinite(value) ? Math.round(Math.max(column.min, Math.min(column.max, value))) : column.defaultWidth;
+}
+export function sanitizeColumnWidths(value: unknown, nodes: Milestone[]): Record<string, number> {
+  const raw = object(value), widths: Record<string, number> = {};
+  for (const column of columnDefaults(nodes)) {
+    const width = raw[column.key];
+    if (Object.hasOwn(raw, column.key) && typeof width === 'number' && Number.isFinite(width)) {
+      const valid = clampWidth(width, column);
+      if (valid !== column.defaultWidth) widths[column.key] = valid;
+    }
+  }
+  return widths;
+}
+export function columns(config: Config): Column[] {
+  return columnDefaults(config.nodes.filter(n => n.enabled)).map(column => ({ ...column,
+    label: column.key === 'month' ? config.monthLabel || '上市时间' : column.key === 'company' ? config.companyLabel || '产品公司' : column.label,
+    width: config.columnWidths && Object.hasOwn(config.columnWidths, column.key) ? clampWidth(config.columnWidths[column.key], column) : column.defaultWidth,
+  }));
+}
+export function setColumnWidth(config: Config, key: string, value: number): boolean {
+  const column = columns(config).find(c => c.key === key);
+  if (!column) return false;
+  const next = clampWidth(value, column);
+  if (next === column.width) return false;
+  if (next === column.defaultWidth) delete config.columnWidths[key];
+  else config.columnWidths[key] = next;
+  return true;
+}
+export function isLowRate(rate: number | null, config: Config): boolean {
+  if (!config.lowRateEnabled || rate === null || !Number.isFinite(rate)) return false;
+  // 29/100 的浮点值乘以 100 可能略小于 29，避免等于阈值时被误标红。
+  const tolerance = Math.max(1, Math.abs(config.lowRateThreshold)) * Number.EPSILON * 4;
+  return config.lowRateThreshold - rate * 100 > tolerance;
 }
 export const normalizeName = (v: string) => v.replace(/[\s()（）_\-]/g, '').replace(/时间|日期/g, '');
 export function suggestGrouping(config: Config, fields: Field[]): Config {
