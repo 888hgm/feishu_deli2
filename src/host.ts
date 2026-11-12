@@ -57,7 +57,7 @@ export function subscribe(onData: () => void, onConfig: (config: Config) => void
   const stops = [dashboard.onDataChange(onData), dashboard.onConfigChange(event => {
     onConfig(hydrateConfig(event.data.customConfig?.milestoneTable));
   })];
-  const periodic = setInterval(() => { if (document.visibilityState !== 'hidden') onData(); }, 30000);
+  const periodic = setInterval(() => { if (document.visibilityState !== 'hidden') onData(); }, 5 * 60 * 1000);
   return () => { ++watchSequence; stops.forEach(stop => stop()); recordStops.forEach(stop => stop()); clearInterval(periodic); };
 }
 export async function syncTheme(): Promise<() => void> {
