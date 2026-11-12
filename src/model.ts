@@ -1,4 +1,4 @@
-export interface Field { id: string; name: string; options?: string[]; numeric?: boolean }
+export interface Field { id: string; name: string; options?: string[]; numeric?: boolean; singleSelect?: boolean }
 export interface TableMeta { id: string; name: string }
 export interface Milestone {
   id: string; name: string; enabled: boolean;
@@ -13,12 +13,14 @@ export interface Config {
   columnWidths: Record<string, number>;
   lowRateEnabled: boolean; lowRateThreshold: number;
   statistic: 'records' | 'sku'; skuFieldId: string; showMonthlyTotal: boolean;
+  projectStatusOnly: boolean; projectStatusFieldId: string;
 }
 export function defaultConfig(): Config {
   return { schemaVersion: 1, title: '各产品公司在开项目关键节点完成汇总表', tableId: '', monthFieldId: '', companyFieldId: '',
     monthMode: 'all', months: [], companyMode: 'all', companies: [], monthSort: 'asc', nodes: [],
     monthLabel: '上市时间', companyLabel: '产品公司', decimals: 0, fontSize: 14, columnWidths: {},
-    lowRateEnabled: false, lowRateThreshold: 80, statistic: 'records', skuFieldId: '', showMonthlyTotal: true };
+    lowRateEnabled: false, lowRateThreshold: 80, statistic: 'records', skuFieldId: '', showMonthlyTotal: true,
+    projectStatusOnly: false, projectStatusFieldId: '' };
 }
 export function newNode(name = ''): Milestone {
   return { id: crypto.randomUUID(), name, enabled: true, planFieldId: '', actualFieldId: '', statusFieldId: '',
@@ -50,7 +52,8 @@ export function hydrateConfig(value: unknown): Config {
     columnWidths: sanitizeColumnWidths(raw.columnWidths, nodes),
     lowRateEnabled: raw.lowRateEnabled === true,
     lowRateThreshold: typeof raw.lowRateThreshold === 'number' && Number.isFinite(raw.lowRateThreshold) ? Math.max(0, Math.min(100, raw.lowRateThreshold)) : 80,
-    statistic: raw.statistic === 'sku' ? 'sku' : 'records', skuFieldId: str(raw.skuFieldId), showMonthlyTotal: raw.showMonthlyTotal !== false };
+    statistic: raw.statistic === 'sku' ? 'sku' : 'records', skuFieldId: str(raw.skuFieldId), showMonthlyTotal: raw.showMonthlyTotal !== false,
+    projectStatusOnly: raw.projectStatusOnly === true, projectStatusFieldId: str(raw.projectStatusFieldId) };
 }
 export function validateConfig(config: Config, fields?: Field[]): string | undefined {
   if (!config.tableId) return '请选择数据表';
@@ -66,7 +69,9 @@ export function validateConfig(config: Config, fields?: Field[]): string | undef
     if (!node.planFieldId || !node.actualFieldId) return `请为“${node.name}”选择计划时间和实际时间字段`;
   }
   if (config.statistic === 'sku' && !config.skuFieldId) return '请选择 SKU 数量数字字段';
+  if (config.projectStatusOnly && !config.projectStatusFieldId) return '请选择项目状态单选字段，或取消“仅统计进行中和延期项目”';
   if (fields) {
+    if (config.projectStatusOnly && !fields.some(f => f.id === config.projectStatusFieldId && f.singleSelect)) return '项目状态字段已删除、不可读或不是单选字段，请重新选择或取消项目状态筛选';
     const required = [config.monthFieldId, config.companyFieldId, ...enabled.flatMap(n => [n.statusFieldId, n.planFieldId, n.actualFieldId])];
     if (required.some(id => !fields.some(f => f.id === id))) return '部分已选字段已删除或不可读，请重新选择字段';
     if (config.statistic === 'sku' && !fields.some(f => f.id === config.skuFieldId && f.numeric)) return 'SKU 数量字段已删除、不可读或不是数字字段，请重新选择';
@@ -148,6 +153,9 @@ export function cellText(value: unknown): string {
 }
 export function suggestedSkuField(fields: Field[]): string {
   return fields.find(f => f.numeric && f.name.replace(/\s/g, '').toUpperCase() === 'SKU数量')?.id ?? '';
+}
+export function suggestedProjectStatusField(fields: Field[]): string {
+  return fields.find(f => f.singleSelect && f.name.trim() === '项目状态')?.id ?? '';
 }
 export function monthKey(label: string): number | undefined {
   const match = label.match(/^\s*(\d{2}|\d{4})(?:年|[-/.])\s*(\d{1,2})\s*月?\s*$/);

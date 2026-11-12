@@ -17,7 +17,7 @@ export async function readFields(table: ReadableTable): Promise<Field[]> {
     const field = metas.find(f => f.id === id);
     if (!field) return [];
     const property = field.property as { options?: { name?: unknown }[] } | undefined;
-    return [{ id: field.id, name: field.name, numeric: field.type === 2, options: Array.isArray(property?.options) ? property.options.flatMap(o => typeof o.name === 'string' ? [o.name] : []) : [] }];
+    return [{ id: field.id, name: field.name, numeric: field.type === 2, singleSelect: field.type === 3, options: Array.isArray(property?.options) ? property.options.flatMap(o => typeof o.name === 'string' ? [o.name] : []) : [] }];
   });
 }
 export async function readRecords(table: ReadableTable, signal?: AbortSignal, progress?: (count: number) => void): Promise<RecordItem[]> {

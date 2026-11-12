@@ -1,5 +1,5 @@
 import './style.css';
-import { defaultConfig, newNode, suggestGrouping, suggestNodes, suggestedSkuField, validateConfig, columns, setColumnWidth, type Config, type Field, type TableMeta, type Milestone } from './model.ts';
+import { defaultConfig, newNode, suggestGrouping, suggestNodes, suggestedSkuField, suggestedProjectStatusField, validateConfig, columns, setColumnWidth, type Config, type Field, type TableMeta, type Milestone } from './model.ts';
 import { getChoices, summarize, tableHTML, exportCSV, escapeHTML as e, type RecordItem, type Choices, type Summary } from './summary.ts';
 import { applyColumnWidths, installColumnResize } from './column-resize.ts';
 import * as host from './host.ts';
@@ -9,12 +9,12 @@ let choices: Choices = { months: [], companies: [] }, summary: Summary | undefin
 let viewing = false, creating = false, ready = false, loading = false, saving = false, error = '';
 let closed = false, tab = 'data', savedJSON = '', loadedTableId = '', initialSuggestions = false;
 let controller: AbortController | undefined, sequence = 0, refreshTimer: ReturnType<typeof setTimeout>, toastTimer: ReturnType<typeof setTimeout>;
-let picker: { node: number; key: 'planFieldId' | 'actualFieldId' | 'statusFieldId' } | { key: 'monthFieldId' | 'companyFieldId' | 'skuFieldId' } | undefined;
+let picker: { node: number; key: 'planFieldId' | 'actualFieldId' | 'statusFieldId' } | { key: 'monthFieldId' | 'companyFieldId' | 'skuFieldId' | 'projectStatusFieldId' } | undefined;
 let batch = false, batchSelected = new Set<string>(), batchSuggestions: Milestone[] = [];
 let returnFocus: HTMLElement | null = null;
 let widthNoticeShown = false;
 const root = document.querySelector<HTMLDivElement>('#app')!;
-root.innerHTML = `<header class="topbar"><div class="identity"><span class="app-icon" aria-hidden="true">▦</span><div><strong>关键节点完成汇总表</strong><small>独立仪表盘插件 · v1.1.2</small></div><span id="state" role="status">连接中</span></div><div class="actions"><button data-action="refresh" disabled>刷新数据</button><button data-action="export" disabled>导出 CSV</button><button data-action="panel" disabled>配置</button><button data-action="save" class="primary top-save" hidden>添加到仪表盘</button></div></header>
+root.innerHTML = `<header class="topbar"><div class="identity"><span class="app-icon" aria-hidden="true">▦</span><div><strong>关键节点完成汇总表</strong><small>独立仪表盘插件 · v1.1.3</small></div><span id="state" role="status">连接中</span></div><div class="actions"><button data-action="refresh" disabled>刷新数据</button><button data-action="export" disabled>导出 CSV</button><button data-action="panel" disabled>配置</button><button data-action="save" class="primary top-save" hidden>添加到仪表盘</button></div></header>
 <div class="workspace"><main class="report"><div class="report-heading"><div><span class="eyebrow">项目节点 / 月度汇总</span><h1 id="report-title"></h1><p class="description">按上市月份、产品公司汇总 · 各节点独立统计</p></div></div><div class="summary-meta"><span id="source-note">等待连接飞书</span><span id="updated"></span></div><div id="message" class="message" role="status"></div><div id="grid" class="grid" tabindex="0" aria-label="汇总表，可横向和纵向滚动" hidden></div><footer class="report-footer"><span id="totals"></span><span>状态非空才参与；完成率 = 完成量 ÷（完成量 + 未完成量）</span></footer><div id="quality-note" class="quality-note" hidden></div></main><aside class="sidebar" aria-label="汇总表配置"><div class="sidebar-heading"><strong>汇总表配置</strong><button class="icon-button" data-action="panel" aria-label="收起配置">×</button></div><nav class="tabs"><button data-action="tab" data-tab="data">数据范围</button><button data-action="tab" data-tab="nodes">节点字段</button><button data-action="tab" data-tab="appearance">表格设置</button></nav><div id="panel" class="panel"></div><footer class="panel-footer"><span id="save-status"></span><button data-action="save" class="primary">保存配置</button></footer></aside></div><dialog id="picker-dialog" aria-labelledby="picker-title"><div class="dialog-heading"><h2 id="picker-title"></h2><button class="icon-button" data-action="dialog-close" aria-label="关闭字段选择">×</button></div><input id="field-search" class="search" type="search" aria-label="搜索字段" placeholder="输入字段名称搜索"><div id="picker-list" class="picker-list"></div><footer id="picker-footer" class="dialog-footer"></footer></dialog><div class="toast" role="status" hidden></div>`;
 const q = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
 const dialog = q<HTMLDialogElement>('#picker-dialog');
@@ -48,7 +48,7 @@ function message(text: string, isError = false) { q('#message').textContent = te
 function renderReport() {
   columnResize.cancel();
   q('#report-title').textContent = config.title.trim() || '关键节点完成汇总表';
-  q('#source-note').textContent = loadedTableId ? `${tables.find(t => t.id === loadedTableId)?.name ?? '当前多维表数据'} · ${config.statistic === 'sku' ? 'SKU数量累加（完成率按SKU加权）' : '记录数量'}` : '等待选择数据表';
+  q('#source-note').textContent = loadedTableId ? `${tables.find(t => t.id === loadedTableId)?.name ?? '当前多维表数据'} · ${config.statistic === 'sku' ? 'SKU数量累加（完成率按SKU加权）' : '记录数量'}${config.projectStatusOnly ? ' · 仅进行中 / 延期' : ''}` : '等待选择数据表';
   summary = undefined; q('#grid').hidden = true; q('#totals').textContent = ''; q('#quality-note').hidden = true;
   if (!ready) { saveState(); return; }
   if (loading) { saveState(); return; }
@@ -61,6 +61,7 @@ function renderReport() {
     q('#grid').innerHTML = tableHTML(summary, config); q('#grid').hidden = false; message('');
     q('#totals').textContent = `${summary.months.length} 个月份 · ${summary.companies.length} 家公司 · ${summary.nodes.length} 个节点 · 当前范围 ${summary.includedRecords} 条记录`;
     const notes: string[] = [];
+    if (config.projectStatusOnly) notes.push(`仅统计项目状态为“进行中”或“延期”的记录；全表已排除其他项目状态 ${summary.excludedProjectStatus} 条`);
     if (summary.missingMonth) notes.push(`${summary.missingMonth} 条记录未填写上市时间`);
     if (summary.missingCompany) notes.push(`${summary.missingCompany} 条记录未填写产品公司`);
     if (summary.otherStatus) notes.push(`${summary.otherStatus} 个非空状态值既非“完成”也非“未完成”，未计入完成率`);
@@ -95,13 +96,16 @@ function lowRateSettings() {
 function statisticSettings() {
   return `<div class="statistic-settings"><label class="field"><span>统计方式</span><select data-statistic aria-label="统计方式"><option value="records" ${config.statistic === 'records' ? 'selected' : ''}>记录数量</option><option value="sku" ${config.statistic === 'sku' ? 'selected' : ''}>SKU数量累加</option></select></label>${config.statistic === 'sku' ? fieldButton('skuFieldId', 'SKU数量字段', config.skuFieldId) : ''}<p class="hint">${config.statistic === 'sku' ? '数量和完成率均按 SKU 数量计算。SKU 空白按 0，负数及无效数字会提示错误。' : '每条状态非空的记录计为 1。'} 状态非空才参与。计划排除单独的斜杠，但计入空白；实际排除单独的斜杠及空白。完成率仍只按状态计算。</p></div>`;
 }
+function projectStatusSettings() {
+  return `<div class="project-status-settings"><label class="check"><input type="checkbox" data-project-status-only ${config.projectStatusOnly ? 'checked' : ''}><span>仅统计进行中和延期项目</span></label>${config.projectStatusOnly ? fieldButton('projectStatusFieldId', '项目状态字段（单选）', config.projectStatusFieldId) : ''}<p class="hint">${config.projectStatusOnly ? '仅保留项目状态为“进行中”或“延期”的记录；其他状态及空白不参与数量、完成率、每月合计和导出。月份、公司范围仍按下方配置保留。' : '未勾选时包含所有项目状态。'}</p></div>`;
+}
 function renderPanel() {
   if (viewing) return;
   const scrollTop = q('#panel').scrollTop;
   const openNodes = new Set([...root.querySelectorAll<HTMLDetailsElement>('.node-card[open]')].map(el => el.dataset.nodeId));
   root.querySelectorAll<HTMLElement>('[data-action=tab]').forEach(b => { b.classList.toggle('active', b.dataset.tab === tab); b.setAttribute('aria-current', b.dataset.tab === tab ? 'page' : 'false'); });
   let html = '';
-  if (tab === 'data') html = `<section class="section"><label class="field"><span>数据表</span><select id="table-select" aria-label="数据表"><option value="">请选择数据表</option>${tables.map(t => `<option value="${e(t.id)}" ${config.tableId === t.id ? 'selected' : ''}>${e(t.name)}</option>`).join('')}</select></label>${fieldButton('monthFieldId', '上市月份字段', config.monthFieldId)}${fieldButton('companyFieldId', '产品公司字段', config.companyFieldId)}${statisticSettings()}<p class="hint">读取当前用户有权访问的全表记录。上市时间用于分组，状态非空才参与节点统计。本版使用下方范围选择，不跟随仪表盘外层筛选。</p></section>${selection('month', '上市月份范围', choices.months)}${selection('company', '产品公司范围', choices.companies)}`;
+  if (tab === 'data') html = `<section class="section"><label class="field"><span>数据表</span><select id="table-select" aria-label="数据表"><option value="">请选择数据表</option>${tables.map(t => `<option value="${e(t.id)}" ${config.tableId === t.id ? 'selected' : ''}>${e(t.name)}</option>`).join('')}</select></label>${fieldButton('monthFieldId', '上市月份字段', config.monthFieldId)}${fieldButton('companyFieldId', '产品公司字段', config.companyFieldId)}${statisticSettings()}${projectStatusSettings()}<p class="hint">读取当前用户有权访问的全表记录。上市时间用于分组，状态非空才参与节点统计。本版使用下方范围选择，不跟随仪表盘外层筛选。</p></section>${selection('month', '上市月份范围', choices.months)}${selection('company', '产品公司范围', choices.companies)}`;
   if (tab === 'nodes') html = `<section class="section"><div class="section-title">统计节点 <span>${config.nodes.filter(n => n.enabled).length} / ${config.nodes.length}</span></div><p class="hint">每个节点对应三列。每个节点需选择计划时间、实际时间和是否完成三个字段。计划空白计入，实际空白不计；两列均排除单独的斜杠。完成率仍按状态计算。</p><div class="node-actions"><button class="primary" data-action="batch">批量选择节点</button><button data-action="add-node">＋ 手动添加</button></div></section><div class="node-list">${config.nodes.map((n, i) => `<details class="node-card" data-node-id="${e(n.id)}" ${openNodes.has(n.id) || !n.planFieldId || !n.actualFieldId || !n.statusFieldId ? 'open' : ''}><summary><label class="check"><input type="checkbox" data-node-enabled="${i}" ${n.enabled ? 'checked' : ''} aria-label="启用${e(n.name || `节点${i + 1}`)}"></label><span class="node-name">${e(n.name || `节点 ${i + 1}`)}</span><span class="node-marker">${n.statusFieldId && n.planFieldId && n.actualFieldId ? '已映射' : '待选字段'}</span></summary><div class="node-body"><label class="field"><span>节点名称</span><input data-node="${i}" data-node-key="name" value="${e(n.name)}" maxlength="80" placeholder="例如：产品设计"></label>${fieldButton('statusFieldId', '是否完成字段（必选）', n.statusFieldId, i)}${fieldButton('planFieldId', '计划时间字段（必选）', n.planFieldId, i)}${fieldButton('actualFieldId', '实际时间字段（必选）', n.actualFieldId, i)}<div class="header-labels"><span class="section-title">表头显示名称</span>${(['planLabel', 'actualLabel', 'rateLabel'] as const).map((k, j) => `<label class="field"><span>${['计划数量列', '实际数量列', '完成率列'][j]}</span><input data-node="${i}" data-node-key="${k}" value="${e(n[k])}" placeholder="${e(j === 2 ? '完成率' : `${n.name}${j === 0 ? '计划完成' : '实际完成'}`)}" maxlength="120"></label>`).join('')}</div><div class="node-bottom"><button data-action="move" data-kind="node" data-index="${i}" data-step="-1" ${!i ? 'disabled' : ''}>上移</button><button data-action="move" data-kind="node" data-index="${i}" data-step="1" ${i === config.nodes.length - 1 ? 'disabled' : ''}>下移</button><button class="danger" data-action="remove-node" data-index="${i}">移除节点</button></div></div></details>`).join('') || '<div class="panel-empty">先点击“批量选择节点”，根据“是否完成”字段勾选需要的节点；字段名称不同也可手动添加。</div>'}</div>`;
   if (tab === 'appearance') html = `<section class="section">${textInput('title', '汇总表标题', config.title)}${textInput('monthLabel', '月份列表头', config.monthLabel, '上市时间')}${textInput('companyLabel', '公司列表头', config.companyLabel, '产品公司')}<label class="check"><input type="checkbox" data-monthly-total ${config.showMonthlyTotal ? 'checked' : ''}><span>显示每月合计行</span></label><p class="hint">每月顶部合计只包含选中公司；完成率按合并后的完成量 ÷（完成量 + 未完成量）计算，不平均各公司百分比。</p><label class="field"><span>月份排序</span><select data-key="monthSort"><option value="asc" ${config.monthSort === 'asc' ? 'selected' : ''}>时间从早到晚</option><option value="desc" ${config.monthSort === 'desc' ? 'selected' : ''}>时间从晚到早</option></select></label><label class="field"><span>完成率小数位</span><select data-key="decimals">${[0, 1, 2].map(n => `<option value="${n}" ${n === config.decimals ? 'selected' : ''}>${n} 位小数</option>`).join('')}</select></label><label class="field"><span>表格字号</span><select data-key="fontSize">${[12, 14, 16].map(n => `<option value="${n}" ${n === config.fontSize ? 'selected' : ''}>${n}px</option>`).join('')}</select></label></section><section class="section"><div class="section-title">统计与展示口径</div><p class="hint">状态为空：该节点三项指标均排除。状态有值：计划仅排除单独的 / 或 ／，空白仍计入；实际排除空白及单独的 / 或 ／。两列分别计算。<br><br>记录模式每条计 1；SKU 模式累计所选数字字段，并用 SKU 完成量及未完成量计算完成率。只识别精确的“完成”和“未完成”；其他非空状态计入数量，不计入完成率分母。分母为 0 显示 —。<br><br>未开启提醒时数值使用统一颜色；合计行也遵循提醒阈值。源表仅被读取，修改表头不会修改源字段。</p></section>${lowRateSettings()}${columnWidthSettings()}`;
   q('#panel').innerHTML = html; q('#panel').scrollTop = scrollTop;
@@ -123,6 +127,7 @@ async function loadTable(autoSuggest = false) {
     records = result.records; fields = result.fields; loadedTableId = id;
     if (autoSuggest) { config = suggestGrouping(config, fields); initialSuggestions = false; }
     if (config.statistic === 'sku' && !config.skuFieldId) config.skuFieldId = suggestedSkuField(fields);
+    if (!config.projectStatusFieldId) config.projectStatusFieldId = suggestedProjectStatusField(fields);
     choices = getChoices(records, config, fields);
     loading = false; q('#updated').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
     renderPanel(); renderReport();
@@ -148,7 +153,7 @@ function renderPicker() {
     q('#picker-list').innerHTML = batchSuggestions.filter(n => n.name.toLowerCase().includes(search) || fields.find(f => f.id === n.statusFieldId)?.name.toLowerCase().includes(search)).map(n => `<label class="batch-item ${existing.has(n.statusFieldId) ? 'muted' : ''}"><input type="checkbox" data-batch-field="${e(n.statusFieldId)}" ${batchSelected.has(n.statusFieldId) || existing.has(n.statusFieldId) ? 'checked' : ''} ${existing.has(n.statusFieldId) ? 'disabled' : ''}><span><strong>${e(n.name)}</strong><small>${existing.has(n.statusFieldId) ? '已添加' : '已找到状态字段；添加后请核对计划、实际时间字段'}</small></span></label>`).join('') || '<p class="hint">没有匹配的“是否完成”字段，可关闭后手动添加节点。</p>';
     q('#picker-footer').innerHTML = `<span id="batch-count">已选 ${batchSelected.size} 个新节点</span><button data-action="dialog-close">取消</button><button class="primary" data-action="batch-apply" ${!batchSelected.size ? 'disabled' : ''}>添加所选节点</button>`;
   } else {
-    q('#picker-list').innerHTML = `<button class="field-choice clear-field" data-action="choose-field" data-id="">清除选择</button>${fields.filter(f => (picker?.key !== 'skuFieldId' || f.numeric) && f.name.toLowerCase().includes(search)).map(f => `<button class="field-choice" data-action="choose-field" data-id="${e(f.id)}">${e(f.name)}</button>`).join('') || '<p>无匹配字段</p>'}`;
+    q('#picker-list').innerHTML = `<button class="field-choice clear-field" data-action="choose-field" data-id="">清除选择</button>${fields.filter(f => (picker?.key !== 'skuFieldId' || f.numeric) && (picker?.key !== 'projectStatusFieldId' || f.singleSelect) && f.name.toLowerCase().includes(search)).map(f => `<button class="field-choice" data-action="choose-field" data-id="${e(f.id)}">${e(f.name)}</button>`).join('') || '<p>无匹配字段</p>'}`;
     q('#picker-footer').innerHTML = '<span class="hint">选择后返回配置，源表字段名称保持不变。</span>';
   }
 }
@@ -182,7 +187,7 @@ root.addEventListener('click', async event => {
   }
   if (action === 'pick') {
     if (loading || !fields.length) { toast('请先选择可读取的数据表'); return; }
-    picker = b.dataset.node === undefined ? { key: b.dataset.key as 'monthFieldId' | 'companyFieldId' | 'skuFieldId' } : { key: b.dataset.key as 'planFieldId' | 'actualFieldId' | 'statusFieldId', node: Number(b.dataset.node) };
+    picker = b.dataset.node === undefined ? { key: b.dataset.key as 'monthFieldId' | 'companyFieldId' | 'skuFieldId' | 'projectStatusFieldId' } : { key: b.dataset.key as 'planFieldId' | 'actualFieldId' | 'statusFieldId', node: Number(b.dataset.node) };
     batch = false; openDialog('选择源表字段');
   }
   if (action === 'choose-field' && picker) {
@@ -237,6 +242,11 @@ root.addEventListener('change', event => {
     rangeChanged(); return;
   }
   if (input.hasAttribute('data-monthly-total')) { config.showMonthlyTotal = (input as HTMLInputElement).checked; rangeChanged(); return; }
+  if (input.hasAttribute('data-project-status-only')) {
+    config.projectStatusOnly = (input as HTMLInputElement).checked;
+    if (config.projectStatusOnly && !config.projectStatusFieldId) config.projectStatusFieldId = suggestedProjectStatusField(fields);
+    rangeChanged(); return;
+  }
   if (input instanceof HTMLInputElement && input.dataset.columnWidth) {
     const column = columns(config).find(c => c.key === input.dataset.columnWidth);
     if (column) changeWidth(column.key, Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : column.width);
@@ -251,6 +261,7 @@ root.addEventListener('change', event => {
   }
   if (input.id === 'table-select') {
     config.tableId = input.value; config.monthFieldId = ''; config.companyFieldId = ''; config.nodes = []; config.skuFieldId = '';
+    config.projectStatusFieldId = '';
     config.months = []; config.companies = []; config.monthMode = 'all'; config.companyMode = 'all';
     fields = []; records = []; choices = { months: [], companies: [] }; loadedTableId = ''; renderPanel();
     void host.watchTable('', queueRefresh); void loadTable(true); return;

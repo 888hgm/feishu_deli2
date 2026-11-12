@@ -1,23 +1,23 @@
 {
-    "name":  "feishu-milestone-table-plugin",
-    "version":  "1.1.2",
-    "description":  "飞书仪表盘关键节点完成汇总表",
-    "private":  true,
-    "type":  "module",
-    "output":  "dist",
-    "engines":  {
-                    "node":  "\u003e=22.12.0"
-                },
-    "scripts":  {
-                    "dev":  "vite --host 127.0.0.1",
-                    "build":  "tsc --noEmit \u0026\u0026 vite build \u0026\u0026 node scripts/check-dist.mjs",
-                    "preview":  "vite preview --host 127.0.0.1"
-                },
-    "dependencies":  {
-                         "@lark-base-open/js-sdk":  "1.0.2"
-                     },
-    "devDependencies":  {
-                            "typescript":  "~5.9.3",
-                            "vite":  "8.3.5"
-                        }
+  "name": "feishu-milestone-table-plugin",
+  "version": "1.1.3",
+  "description": "飞书仪表盘关键节点完成汇总表",
+  "private": true,
+  "type": "module",
+  "output": "dist",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@lark-base-open/js-sdk": "1.0.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "8.3.5"
+  }
 }
