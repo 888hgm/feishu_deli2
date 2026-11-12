@@ -63,10 +63,11 @@ export function validateConfig(config: Config, fields?: Field[]): string | undef
   for (const node of enabled) {
     if (!node.name.trim()) return '请填写节点名称';
     if (!node.statusFieldId) return `请为“${node.name}”选择是否完成字段`;
+    if (!node.planFieldId || !node.actualFieldId) return `请为“${node.name}”选择计划时间和实际时间字段`;
   }
   if (config.statistic === 'sku' && !config.skuFieldId) return '请选择 SKU 数量数字字段';
   if (fields) {
-    const required = [config.monthFieldId, config.companyFieldId, ...enabled.map(n => n.statusFieldId)];
+    const required = [config.monthFieldId, config.companyFieldId, ...enabled.flatMap(n => [n.statusFieldId, n.planFieldId, n.actualFieldId])];
     if (required.some(id => !fields.some(f => f.id === id))) return '部分已选字段已删除或不可读，请重新选择字段';
     if (config.statistic === 'sku' && !fields.some(f => f.id === config.skuFieldId && f.numeric)) return 'SKU 数量字段已删除、不可读或不是数字字段，请重新选择';
   }

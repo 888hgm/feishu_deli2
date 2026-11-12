@@ -55,13 +55,15 @@ export function summarize(records: RecordItem[], config: Config, choices: Choice
     nodes.forEach((node, i) => {
       const stats = row.cells[i], status = cellText(record.fields[node.statusFieldId]);
       if (!status) { stats.blankStatus++; blankStatus++; return; }
-      // 状态非空才参与该节点的所有指标；不读取计划或实际时间。
+      // 状态非空是参与前提；时间内容只影响数量，不影响完成率分子、分母。
       if (quantity === undefined) {
         quantity = config.statistic === 'sku' ? skuQuantity(record.fields[config.skuFieldId], metricName) : 1;
         if (config.statistic === 'sku' && quantity === 0) zeroSkuRecords++;
       }
       stats.validRecords++;
-      stats.plan = addQuantity(stats.plan, quantity); stats.actual = addQuantity(stats.actual, quantity);
+      const plan = cellText(record.fields[node.planFieldId]), actual = cellText(record.fields[node.actualFieldId]);
+      if (plan !== '/' && plan !== '／') stats.plan = addQuantity(stats.plan, quantity);
+      if (actual !== '' && actual !== '/' && actual !== '／') stats.actual = addQuantity(stats.actual, quantity);
       if (status === '完成') stats.completed = addQuantity(stats.completed, quantity);
       else if (status === '未完成') stats.unfinished = addQuantity(stats.unfinished, quantity);
       else { stats.otherStatus++; otherStatus++; }
