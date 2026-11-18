@@ -9,16 +9,29 @@ export interface SummaryRow { month: string; company: string; kind: 'company' | 
 export interface Summary {
   months: string[]; companies: string[]; nodes: Milestone[]; rows: SummaryRow[]; subtotals: SummaryRow[];
   readRecords: number; includedRecords: number; missingMonth: number; missingCompany: number;
-  otherStatus: number; blankStatus: number; zeroSkuRecords: number; excludedProjectStatus: number;
+  otherStatus: number; blankStatus: number; zeroSkuRecords: number; excludedProjectStatus: number; excludedFieldFilter: number;
 }
 export interface Choices { months: string[]; companies: string[] }
+export function matchesFieldFilter(record: RecordItem, config: Config): boolean {
+  if (!config.fieldFilterEnabled) return true;
+  const value = cellText(record.fields[config.fieldFilterId]), target = config.fieldFilterValue.trim();
+  switch (config.fieldFilterOperator) {
+    case 'equals': return value === target;
+    case 'notEquals': return value !== target;
+    case 'contains': return value.includes(target);
+    case 'notContains': return !value.includes(target);
+    case 'empty': return value === '';
+    case 'notEmpty': return value !== '';
+    default: return false;
+  }
+}
 export function matchesProjectStatus(record: RecordItem, config: Config): boolean {
   if (!config.projectStatusOnly) return true;
   const status = cellText(record.fields[config.projectStatusFieldId]);
   return status === '进行中' || status === '延期';
 }
 export function getChoices(records: RecordItem[], config: Config, fields: Field[]): Choices {
-  records = records.filter(record => matchesProjectStatus(record, config));
+  records = records.filter(record => matchesProjectStatus(record, config) && matchesFieldFilter(record, config));
   const monthOptions = fields.find(f => f.id === config.monthFieldId)?.options ?? [];
   const companyOptions = fields.find(f => f.id === config.companyFieldId)?.options ?? [];
   return {
@@ -45,13 +58,14 @@ export function summarize(records: RecordItem[], config: Config, choices: Choice
       rows.push(row); group.set(company, row);
     }
   }
-  let missingMonth = 0, missingCompany = 0, includedRecords = 0, otherStatus = 0, blankStatus = 0, zeroSkuRecords = 0, excludedProjectStatus = 0;
+  let missingMonth = 0, missingCompany = 0, includedRecords = 0, otherStatus = 0, blankStatus = 0, zeroSkuRecords = 0, excludedProjectStatus = 0, excludedFieldFilter = 0;
   const seen = new Set<string>(), metricName = fields?.find(f => f.id === config.skuFieldId)?.name ?? 'SKU数量';
   for (const record of records) {
     if (seen.has(record.recordId)) continue;
     seen.add(record.recordId);
     // 项目状态先筛选，排除记录不参与分组、节点统计、SKU校验及完成率。
     if (!matchesProjectStatus(record, config)) { excludedProjectStatus++; continue; }
+    if (!matchesFieldFilter(record, config)) { excludedFieldFilter++; continue; }
     const month = cellText(record.fields[config.monthFieldId]), company = cellText(record.fields[config.companyFieldId]);
     if (!month) missingMonth++;
     if (!company) missingCompany++;
@@ -92,7 +106,7 @@ export function summarize(records: RecordItem[], config: Config, choices: Choice
     for (const cell of total.cells) setRate(cell);
     return total;
   });
-  return { months, companies, nodes, rows, subtotals, readRecords: seen.size, includedRecords, missingMonth, missingCompany, otherStatus, blankStatus, zeroSkuRecords, excludedProjectStatus };
+  return { months, companies, nodes, rows, subtotals, readRecords: seen.size, includedRecords, missingMonth, missingCompany, otherStatus, blankStatus, zeroSkuRecords, excludedProjectStatus, excludedFieldFilter };
 }
 export function displayRows(summary: Summary, config: Config): SummaryRow[] {
   if (!summary.companies.length) return [];

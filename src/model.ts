@@ -1,5 +1,7 @@
 export interface Field { id: string; name: string; options?: string[]; numeric?: boolean; singleSelect?: boolean }
 export interface TableMeta { id: string; name: string }
+export const filterOperators = { contains: '包含', notContains: '不包含', equals: '等于', notEquals: '不等于', empty: '为空', notEmpty: '不为空' } as const;
+export type FilterOperator = keyof typeof filterOperators;
 export interface Milestone {
   id: string; name: string; enabled: boolean;
   planFieldId: string; actualFieldId: string; statusFieldId: string;
@@ -14,13 +16,15 @@ export interface Config {
   lowRateEnabled: boolean; lowRateThreshold: number;
   statistic: 'records' | 'sku'; skuFieldId: string; showMonthlyTotal: boolean;
   projectStatusOnly: boolean; projectStatusFieldId: string;
+  fieldFilterEnabled: boolean; fieldFilterId: string; fieldFilterOperator: FilterOperator; fieldFilterValue: string;
 }
 export function defaultConfig(): Config {
   return { schemaVersion: 1, title: '各产品公司在开项目关键节点完成汇总表', tableId: '', monthFieldId: '', companyFieldId: '',
     monthMode: 'all', months: [], companyMode: 'all', companies: [], monthSort: 'asc', nodes: [],
     monthLabel: '上市时间', companyLabel: '产品公司', decimals: 0, fontSize: 14, columnWidths: {},
     lowRateEnabled: false, lowRateThreshold: 80, statistic: 'records', skuFieldId: '', showMonthlyTotal: true,
-    projectStatusOnly: false, projectStatusFieldId: '' };
+    projectStatusOnly: false, projectStatusFieldId: '',
+    fieldFilterEnabled: false, fieldFilterId: '', fieldFilterOperator: 'equals', fieldFilterValue: '' };
 }
 export function newNode(name = ''): Milestone {
   return { id: crypto.randomUUID(), name, enabled: true, planFieldId: '', actualFieldId: '', statusFieldId: '',
@@ -53,7 +57,10 @@ export function hydrateConfig(value: unknown): Config {
     lowRateEnabled: raw.lowRateEnabled === true,
     lowRateThreshold: typeof raw.lowRateThreshold === 'number' && Number.isFinite(raw.lowRateThreshold) ? Math.max(0, Math.min(100, raw.lowRateThreshold)) : 80,
     statistic: raw.statistic === 'sku' ? 'sku' : 'records', skuFieldId: str(raw.skuFieldId), showMonthlyTotal: raw.showMonthlyTotal !== false,
-    projectStatusOnly: raw.projectStatusOnly === true, projectStatusFieldId: str(raw.projectStatusFieldId) };
+    projectStatusOnly: raw.projectStatusOnly === true, projectStatusFieldId: str(raw.projectStatusFieldId),
+    fieldFilterEnabled: raw.fieldFilterEnabled === true, fieldFilterId: str(raw.fieldFilterId),
+    fieldFilterOperator: typeof raw.fieldFilterOperator === 'string' && Object.hasOwn(filterOperators, raw.fieldFilterOperator) ? raw.fieldFilterOperator as FilterOperator : 'equals',
+    fieldFilterValue: str(raw.fieldFilterValue) };
 }
 export function validateConfig(config: Config, fields?: Field[]): string | undefined {
   if (!config.tableId) return '请选择数据表';
@@ -69,6 +76,12 @@ export function validateConfig(config: Config, fields?: Field[]): string | undef
     if (!node.planFieldId || !node.actualFieldId) return `请为“${node.name}”选择计划时间和实际时间字段`;
   }
   if (config.statistic === 'sku' && !config.skuFieldId) return '请选择 SKU 数量数字字段';
+  if (config.fieldFilterEnabled) {
+    if (!config.fieldFilterId) return '请选择筛选的单选字段，或关闭字段筛选';
+    if (!Object.hasOwn(filterOperators, config.fieldFilterOperator)) return '请选择有效的筛选条件';
+    if (!['empty', 'notEmpty'].includes(config.fieldFilterOperator) && !config.fieldFilterValue.trim()) return '请输入筛选值；筛选空白请使用“为空”或“不为空”';
+    if (fields && !fields.some(f => f.id === config.fieldFilterId && f.singleSelect)) return '筛选字段已删除、不可读或不是单选字段，请重新选择或关闭字段筛选';
+  }
   if (config.projectStatusOnly && !config.projectStatusFieldId) return '请选择项目状态单选字段，或取消“仅统计进行中和延期项目”';
   if (fields) {
     if (config.projectStatusOnly && !fields.some(f => f.id === config.projectStatusFieldId && f.singleSelect)) return '项目状态字段已删除、不可读或不是单选字段，请重新选择或取消项目状态筛选';
